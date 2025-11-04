@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Redis for state storage
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Workflow API server
+  api-server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_ADDR=redis:6379
+      - QUEUE_NAME=default
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Worker pool
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    environment:
+      - REDIS_ADDR=redis:6379
+      - QUEUE_NAME=default
+      - MAX_CONCURRENT=5
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: workflow-network
+
