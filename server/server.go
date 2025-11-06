@@ -120,7 +120,8 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID, err := s.engine.StartWorkflow(r.Context(), req.WorkflowName, req.Input)
+    idemKey := r.Header.Get("Idempotency-Key")
+    workflowID, err := s.engine.StartWorkflowWithOptions(r.Context(), req.WorkflowName, req.Input, engine.StartWorkflowOptions{IdempotencyKey: idemKey})
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start workflow: %v", err))
 		return

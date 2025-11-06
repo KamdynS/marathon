@@ -72,6 +72,31 @@ type Store interface {
 
 	// DeleteWorkflow removes workflow state and events (for cleanup)
 	DeleteWorkflow(ctx context.Context, workflowID string) error
+
+  // MapIdempotencyKeyToWorkflow atomically maps an idempotency key to a workflow ID.
+  // Returns (created, existingWorkflowID). If created is false and existingWorkflowID is non-empty,
+  // the key already existed and maps to existingWorkflowID.
+  MapIdempotencyKeyToWorkflow(ctx context.Context, key string, workflowID string) (bool, string, error)
+
+  // GetWorkflowIDByIdempotencyKey returns the workflow ID for the given idempotency key, if present.
+  GetWorkflowIDByIdempotencyKey(ctx context.Context, key string) (string, bool, error)
+
+  // ScheduleTimer persists a timer for a workflow. If the timer already exists, it's a no-op.
+  ScheduleTimer(ctx context.Context, workflowID string, timerID string, fireAt time.Time) error
+
+  // ListDueTimers returns all timers due at or before the provided time.
+  ListDueTimers(ctx context.Context, now time.Time) ([]TimerRecord, error)
+
+  // MarkTimerFired marks a timer as fired (idempotent) and returns true if it was transitioned.
+  MarkTimerFired(ctx context.Context, workflowID string, timerID string) (bool, error)
+}
+
+// TimerRecord represents a durable timer persisted by the store.
+type TimerRecord struct {
+  WorkflowID string    `json:"workflow_id"`
+  TimerID    string    `json:"timer_id"`
+  FireAt     time.Time `json:"fire_at"`
+  Fired      bool      `json:"fired"`
 }
 
 // IsTerminal returns true if the status is terminal (workflow is done)

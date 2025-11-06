@@ -16,3 +16,24 @@ While I do have a roadmap planned out, my immediate goal for tackling features i
 
 I'll start by opening all feature requests. Bugs and discussions may be opened by anyone, and anyone can pick up whichever issues you would like. 
 
+## Testing Policy
+
+- Prefer table-driven tests for all units where inputs/outputs can be enumerated.
+- Add a test file for every package and for any file that has behavioral logic.
+- Aim for at least 80% coverage across the repository.
+- Keep tests race-safe: run `go test -race ./...` locally.
+- Use subtests (`t.Run`) for clarity and to isolate cases.
+- When adding new features, include coverage that exercises error paths and edge cases.
+
+### Running tests and coverage
+
+```bash
+go test ./...
+go test -race ./...
+go test ./... -cover -coverprofile=coverage.out
+go tool cover -func=coverage.out | sort -k3 -nr | head -n 30
+go tool cover -html=coverage.out -o coverage.html
+```
+
+We keep CI fast; prefer unit tests over long-running integration tests by default. If you add an integration test, mark it with a build tag or `t.Skip` when external deps are unavailable.
+
