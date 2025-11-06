@@ -36,6 +36,15 @@ type Queue interface {
 - Minimal constructor config structs; no global env reliance.
 - Build tags optional (e.g., `adapters_redis`, `adapters_sqs`) to keep base deps light.
 
+### SQS Notes
+- At-least-once delivery; duplicates are possible and must be handled by higher layers.
+- `Len` uses `ApproximateNumberOfMessages` and is approximate by design.
+- Visibility timeout controls redelivery; messages not Acked before timeout will reappear.
+- Nack behavior:
+  - `requeue=true` sets visibility to a configured backoff (or 0 for immediate retry).
+  - `requeue=false` sets visibility to 0 so redrive policy (DLQ) can apply; optionally drop via delete.
+- Optional FIFO support via `MessageGroupId` and deduplication by `task.ID`.
+
 
 ### Redis Store Notes
 - Key prefix (default `marathon`), overridable.

@@ -316,6 +316,24 @@ Build with tags:
 go build -tags adapters_redis,adapters_sqs
 ```
 
+#### SQS Adapter (optional)
+
+- The SQS adapter is behind the `adapters_sqs` build tag to keep AWS deps optional.
+- Build or test with the tag when you need it:
+
+```bash
+# Build with SQS enabled
+go build -tags adapters_sqs ./...
+
+# Run SQS adapter integration tests (Localstack)
+LOCALSTACK_URL=http://localhost:4566 go test ./adapters/sqs -tags adapters_sqs -v
+
+# Or against AWS (ensure credentials and region are set)
+SQS_QUEUE_URL="https://sqs.${AWS_REGION}.amazonaws.com/<acct>/<queue>" \
+AWS_REGION="${AWS_REGION}" \
+go test ./adapters/sqs -tags adapters_sqs -v
+```
+
 ## Common Patterns
 
 ### ReAct Agent Loop
