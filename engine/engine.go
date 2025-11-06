@@ -200,15 +200,17 @@ func (e *Engine) executeWorkflow(ctx context.Context, workflowID string, def *wo
 	workflowState.EndTime = &now
 
 	if err != nil {
-		// Workflow failed
+		// If workflow was canceled meanwhile, do not override to failed
+		current, _ := e.stateStore.GetWorkflowState(ctx, workflowID)
+		if current != nil && current.Status == state.StatusCanceled {
+			log.Printf("[Engine] Workflow %s canceled during execution", workflowID)
+			e.stateStore.SaveWorkflowState(ctx, current)
+			return
+		}
 		workflowState.Status = state.StatusFailed
 		workflowState.Error = err.Error()
-
-		event := state.NewEvent(workflowID, state.EventWorkflowFailed, map[string]interface{}{
-			"error": err.Error(),
-		})
+		event := state.NewEvent(workflowID, state.EventWorkflowFailed, map[string]interface{}{"error": err.Error()})
 		e.stateStore.AppendEvent(ctx, event)
-
 		log.Printf("[Engine] Workflow %s failed: %v", workflowID, err)
 	} else {
 		// Workflow completed

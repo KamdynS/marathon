@@ -22,6 +22,11 @@ const (
 	EventTimerScheduled    EventType = "timer_scheduled"
 	EventTimerFired        EventType = "timer_fired"
 	EventSignalReceived    EventType = "signal_received"
+	// Agent loop specific events (SSE-friendly)
+	EventAgentStepPlanned EventType = "agent_step_planned"
+	EventAgentToolCalled  EventType = "agent_tool_called"
+	EventAgentToolResult  EventType = "agent_tool_result"
+	EventAgentMessage     EventType = "agent_message"
 )
 
 // Event represents a workflow execution event

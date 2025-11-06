@@ -95,6 +95,15 @@ func (a *ChatAgent) RunStream(ctx context.Context, input Message, output chan<- 
 	// Handle at most one tool call per turn (multi-tool deferred)
 	if len(resp.ToolCalls) > 0 && effectiveTools != nil {
 		tc := resp.ToolCalls[0]
+		// emit tool_call meta message for external observers
+		output <- Message{
+			Role:    "tool_call",
+			Content: "",
+			Meta: map[string]string{
+				"name":      tc.Name,
+				"arguments": tc.Arguments,
+			},
+		}
 		if t, ok := effectiveTools.Get(tc.Name); ok {
 			for _, m := range a.middleware {
 				_ = m.BeforeToolExecute(ctx, tc.Name, tc.Arguments)
@@ -107,7 +116,16 @@ func (a *ChatAgent) RunStream(ctx context.Context, input Message, output chan<- 
 				_ = m.AfterToolExecute(ctx, tc.Name, result, execErr)
 			}
 			if execErr != nil {
-				result = fmt.Sprintf("error: %v", execErr)
+				// propagate error to trigger activity retry; do not emit tool_result
+				return fmt.Errorf("tool %s failed: %v", tc.Name, execErr)
+			}
+			// emit tool_result meta message for external observers
+			output <- Message{
+				Role:    "tool_result",
+				Content: result,
+				Meta: map[string]string{
+					"name": tc.Name,
+				},
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", Content: result})
 		}
