@@ -135,6 +135,11 @@ func (e *Engine) GetWorkflowEvents(ctx context.Context, workflowID string) ([]*s
 	return e.stateStore.GetEvents(ctx, workflowID)
 }
 
+// GetWorkflowEventsSince retrieves events for a workflow with sequence greater than 'since'.
+func (e *Engine) GetWorkflowEventsSince(ctx context.Context, workflowID string, since int64) ([]*state.Event, error) {
+	return e.stateStore.GetEventsSince(ctx, workflowID, since)
+}
+
 // CancelWorkflow cancels a running workflow
 func (e *Engine) CancelWorkflow(ctx context.Context, workflowID string) error {
 	// Get current state
