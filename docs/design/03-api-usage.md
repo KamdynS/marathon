@@ -7,6 +7,12 @@
 eng := setupWorkflowEngine()
 go startWorkers(eng)
 
+// Register agent-iteration activity (agent loop integration)
+// agentSetup() constructs a ChatAgent with tools and LLM router
+actReg := activity.NewRegistry()
+iter := &activity.AgentActivity{NameStr: "agent-iteration", Agent: agentSetup()}
+_ = actReg.Register("agent-iteration", iter, activity.Info{Description: "agent iteration"})
+
 // Your web server
 r := gin.Default()
 
@@ -30,6 +36,23 @@ r.GET("/api/workflows/:id", func(c *gin.Context) {
 r.GET("/api/workflows/:id/events", sseHandler(eng))
 
 _ = r.Run(":8080")
+```
+
+### Agent Loop Workflow Example
+```go
+// Build and register loop workflow
+def := &workflow.Definition{
+    Name:     "agent-loop",
+    Workflow: &workflow.AgentLoopWorkflow{},
+    Options:  workflow.Options{TaskQueue: "default"},
+}
+_ = eng.RegisterWorkflow(def) // pseudo: wrap your registry injection
+
+// Start the loop
+id, _ := eng.StartWorkflow(ctx, "agent-loop", workflow.AgentLoopInput{
+    Message:       "Plan a 2-step answer",
+    MaxIterations: 2,
+})
 ```
 
 ### SSE Handler (server-agnostic helper)

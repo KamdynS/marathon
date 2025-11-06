@@ -1,15 +1,15 @@
 package engine
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "sync"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"sync"
+	"time"
 
-    "github.com/KamdynS/marathon/queue"
-    "github.com/KamdynS/marathon/state"
-    "github.com/KamdynS/marathon/workflow"
+	"github.com/KamdynS/marathon/queue"
+	"github.com/KamdynS/marathon/state"
+	"github.com/KamdynS/marathon/workflow"
 )
 
 // executionContext implements workflow.Context
@@ -40,18 +40,38 @@ func (ctx *executionContext) ExecuteActivity(activityCtx context.Context, activi
 	// Generate activity ID
 	activityID := generateActivityID()
 
+	return ctx.ExecuteActivityWithID(activityCtx, activityName, input, activityID)
+}
+
+// ExecuteActivityWithID implements workflow.Context with stable id support
+func (ctx *executionContext) ExecuteActivityWithID(activityCtx context.Context, activityName string, input interface{}, activityID string) workflow.Future {
+	if activityID == "" {
+		activityID = generateActivityID()
+	}
+
+	// If activity already completed, return cached result
+	if st, err := ctx.stateStore.GetActivityState(activityCtx, activityID); err == nil && st != nil {
+		if st.Status == state.StatusCompleted {
+			future := newFuture(activityID)
+			future.setValue(st.Output)
+			return future
+		}
+	}
+
 	// Create task
 	task := queue.NewTask(queue.TaskTypeActivity, ctx.workflowID, input)
 	task.ActivityID = activityID
 	task.ActivityName = activityName
 
-	// Record activity scheduled event
-	event := state.NewEvent(ctx.workflowID, state.EventActivityScheduled, map[string]interface{}{
-		"activity_id":   activityID,
-		"activity_name": activityName,
-		"input":         input,
-	})
-	ctx.stateStore.AppendEvent(activityCtx, event)
+	// Record activity scheduled event only if not previously scheduled
+	if _, err := ctx.stateStore.GetActivityState(activityCtx, activityID); err != nil {
+		event := state.NewEvent(ctx.workflowID, state.EventActivityScheduled, map[string]interface{}{
+			"activity_id":   activityID,
+			"activity_name": activityName,
+			"input":         input,
+		})
+		ctx.stateStore.AppendEvent(activityCtx, event)
+	}
 
 	// Enqueue task
 	if err := ctx.queue.Enqueue(activityCtx, ctx.taskQueue, task); err != nil {
@@ -108,51 +128,51 @@ func (ctx *executionContext) pollActivityResult(activityCtx context.Context, act
 
 // Sleep implements workflow.Context
 func (ctx *executionContext) Sleep(duration time.Duration) workflow.Future {
-    timerID := fmt.Sprintf("tm-%d", time.Now().UnixNano())
-    fireAt := time.Now().Add(duration).UTC()
+	timerID := fmt.Sprintf("tm-%d", time.Now().UnixNano())
+	fireAt := time.Now().Add(duration).UTC()
 
-    // persist timer schedule (idempotent)
-    _ = ctx.stateStore.ScheduleTimer(context.Background(), ctx.workflowID, timerID, fireAt)
+	// persist timer schedule (idempotent)
+	_ = ctx.stateStore.ScheduleTimer(context.Background(), ctx.workflowID, timerID, fireAt)
 
-    // record timer scheduled event
-    evt := state.NewEvent(ctx.workflowID, state.EventTimerScheduled, map[string]interface{}{
-        "timer_id": timerID,
-        "fire_at":  fireAt,
-        "duration": duration.String(),
-    })
-    _ = ctx.stateStore.AppendEvent(context.Background(), evt)
+	// record timer scheduled event
+	evt := state.NewEvent(ctx.workflowID, state.EventTimerScheduled, map[string]interface{}{
+		"timer_id": timerID,
+		"fire_at":  fireAt,
+		"duration": duration.String(),
+	})
+	_ = ctx.stateStore.AppendEvent(context.Background(), evt)
 
-    future := newFuture(timerID)
+	future := newFuture(timerID)
 
-    // poll for TimerFired event durably
-    go func() {
-        ticker := time.NewTicker(200 * time.Millisecond)
-        defer ticker.Stop()
-        for {
-            select {
-            case <-ctx.Done():
-                future.setError(ctx.Err())
-                return
-            case <-ticker.C:
-                events, err := ctx.stateStore.GetEventsSince(context.Background(), ctx.workflowID, 0)
-                if err != nil {
-                    continue
-                }
-                for _, e := range events {
-                    if e.Type == state.EventTimerFired {
-                        if idAny, ok := e.Data["timer_id"]; ok {
-                            if idStr, ok := idAny.(string); ok && idStr == timerID {
-                                future.setValue(nil)
-                                return
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }()
+	// poll for TimerFired event durably
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				future.setError(ctx.Err())
+				return
+			case <-ticker.C:
+				events, err := ctx.stateStore.GetEventsSince(context.Background(), ctx.workflowID, 0)
+				if err != nil {
+					continue
+				}
+				for _, e := range events {
+					if e.Type == state.EventTimerFired {
+						if idAny, ok := e.Data["timer_id"]; ok {
+							if idStr, ok := idAny.(string); ok && idStr == timerID {
+								future.setValue(nil)
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+	}()
 
-    return future
+	return future
 }
 
 // Now implements workflow.Context

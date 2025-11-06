@@ -238,39 +238,39 @@ func (w *Worker) executeActivity(ctx context.Context, task *queue.Task) *queue.T
 		return result
 	}
 
-    // Load existing activity state if any for idempotency
-    var activityState *state.ActivityState
-    existing, getErr := w.stateStore.GetActivityState(ctx, task.ActivityID)
-    if getErr == nil {
-        // Existing record
-        activityState = existing
-        // If already completed, return cached result without emitting duplicate events
-        if activityState.Status == state.StatusCompleted {
-            result.Success = true
-            result.Output = activityState.Output
-            return result
-        }
-        // Already started previously: do not emit duplicate ActivityStarted event
-    } else {
-        // No existing record; create running state and emit ActivityStarted once
-        activityState = &state.ActivityState{
-            ActivityID:   task.ActivityID,
-            ActivityName: task.ActivityName,
-            WorkflowID:   task.WorkflowID,
-            Status:       state.StatusRunning,
-            Input:        task.Input,
-            StartTime:    time.Now().UTC(),
-            Attempt:      task.Attempts,
-        }
-        w.stateStore.SaveActivityState(ctx, activityState)
+	// Load existing activity state if any for idempotency
+	var activityState *state.ActivityState
+	existing, getErr := w.stateStore.GetActivityState(ctx, task.ActivityID)
+	if getErr == nil {
+		// Existing record
+		activityState = existing
+		// If already completed, return cached result without emitting duplicate events
+		if activityState.Status == state.StatusCompleted {
+			result.Success = true
+			result.Output = activityState.Output
+			return result
+		}
+		// Already started previously: do not emit duplicate ActivityStarted event
+	} else {
+		// No existing record; create running state and emit ActivityStarted once
+		activityState = &state.ActivityState{
+			ActivityID:   task.ActivityID,
+			ActivityName: task.ActivityName,
+			WorkflowID:   task.WorkflowID,
+			Status:       state.StatusRunning,
+			Input:        task.Input,
+			StartTime:    time.Now().UTC(),
+			Attempt:      task.Attempts,
+		}
+		w.stateStore.SaveActivityState(ctx, activityState)
 
-        // Record activity started event once
-        event := state.NewEvent(task.WorkflowID, state.EventActivityStarted, map[string]interface{}{
-            "activity_id":   task.ActivityID,
-            "activity_name": task.ActivityName,
-        })
-        w.stateStore.AppendEvent(ctx, event)
-    }
+		// Record activity started event once
+		event := state.NewEvent(task.WorkflowID, state.EventActivityStarted, map[string]interface{}{
+			"activity_id":   task.ActivityID,
+			"activity_name": task.ActivityName,
+		})
+		w.stateStore.AppendEvent(ctx, event)
+	}
 
 	// Create execution context with timeout
 	execCtx := ctx
@@ -281,12 +281,43 @@ func (w *Worker) executeActivity(ctx context.Context, task *queue.Task) *queue.T
 	}
 
 	// Execute the activity
-	output, err := reg.Activity.Execute(execCtx, task.Input)
+	// Inject an event emitter into the activity context so it can stream agent events
+	execCtx = activity.WithEventEmitter(execCtx, func(eventType state.EventType, data map[string]interface{}) error {
+		evt := state.NewEvent(task.WorkflowID, eventType, data)
+		return w.stateStore.AppendEvent(ctx, evt)
+	})
+	// Inject ActivityEventContext for idempotency-aware activities
+	execCtx = activity.WithActivityEventContext(execCtx, activity.ActivityEventContext{
+		Store:      w.stateStore,
+		WorkflowID: task.WorkflowID,
+	})
+
+	// Derive a cancelable context that cancels when workflow is canceled
+	wfCtx, cancel := context.WithCancel(execCtx)
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-wfCtx.Done():
+				return
+			case <-ticker.C:
+				st, err := w.stateStore.GetWorkflowState(context.Background(), task.WorkflowID)
+				if err == nil && st.Status == state.StatusCanceled {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	output, err := reg.Activity.Execute(wfCtx, task.Input)
 
 	now := time.Now().UTC()
 	activityState.EndTime = &now
 
-    if err != nil {
+	if err != nil {
 		// Activity failed
 		result.Error = err.Error()
 		activityState.Status = state.StatusFailed
@@ -305,16 +336,16 @@ func (w *Worker) executeActivity(ctx context.Context, task *queue.Task) *queue.T
 		// Activity succeeded
 		result.Success = true
 		result.Output = output
-        if activityState.Status != state.StatusCompleted {
-            activityState.Status = state.StatusCompleted
-            activityState.Output = output
-            // Record completion event once
-            event := state.NewEvent(task.WorkflowID, state.EventActivityCompleted, map[string]interface{}{
-                "activity_id": task.ActivityID,
-                "output":      output,
-            })
-            w.stateStore.AppendEvent(ctx, event)
-        }
+		if activityState.Status != state.StatusCompleted {
+			activityState.Status = state.StatusCompleted
+			activityState.Output = output
+			// Record completion event once
+			event := state.NewEvent(task.WorkflowID, state.EventActivityCompleted, map[string]interface{}{
+				"activity_id": task.ActivityID,
+				"output":      output,
+			})
+			w.stateStore.AppendEvent(ctx, event)
+		}
 
 		log.Printf("[Worker %s] Activity %s completed successfully", w.id, task.ActivityName)
 	}

@@ -25,6 +25,10 @@ type Context interface {
 	// ExecuteActivity schedules an activity for execution
 	ExecuteActivity(ctx context.Context, activity string, input interface{}) Future
 
+	// ExecuteActivityWithID schedules an activity with a stable ID for idempotency.
+	// If an activity with the same ID is already completed, returns the cached result.
+	ExecuteActivityWithID(ctx context.Context, activity string, input interface{}, activityID string) Future
+
 	// Sleep pauses workflow execution for the specified duration
 	Sleep(duration time.Duration) Future
 
