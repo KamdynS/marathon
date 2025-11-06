@@ -54,6 +54,7 @@ POST /workflows
 ```bash
 curl -X POST http://localhost:8080/workflows \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: <client-generated-key>" \
   -d '{
     "workflow_name": "summarize-text",
     "input": {
@@ -75,6 +76,10 @@ curl -X POST http://localhost:8080/workflows \
 - `200` - Workflow started successfully
 - `400` - Invalid request (missing workflow_name)
 - `500` - Internal error
+
+**Idempotency**
+
+- Optionally send header `Idempotency-Key` to ensure repeated start requests return the same `workflow_id` without duplicating events.
 
 ---
 

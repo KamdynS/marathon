@@ -20,6 +20,16 @@ This library is written to be hosted entirely within your own infra, with an emp
 Contributions welcome! This is a new project, so there's plenty to build.
 I've written thoughts about the direction I want this project to take in [CONTRIBUTING](../docs/CONTRIBUTING.md)
 
+### Testing
+
+- We prefer table-driven tests and target 80%+ coverage across the repo.
+- Quick start:
+
+```bash
+go test ./... -cover
+go test ./... -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
+```
+
 ## License
 
 Apache License 2.0 - see [LICENSE](../LICENSE) for details.

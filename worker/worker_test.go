@@ -204,3 +204,55 @@ func TestWorker_ActivityFailure(t *testing.T) {
 		t.Error("expected activity failure event to be recorded")
 	}
 }
+
+func TestWorker_Activity_Idempotency_Table(t *testing.T) {
+    actReg := activity.NewRegistry()
+    actReg.Register("echo", activity.ActivityFunc(func(ctx context.Context, in interface{}) (interface{}, error) {
+        return in, nil
+    }), activity.Info{})
+
+    cases := []struct{
+        name            string
+        preState        *state.ActivityState
+        expectStarted   int
+        expectCompleted int
+        expectOutput    interface{}
+    }{
+        {name: "fresh", preState: nil, expectStarted: 1, expectCompleted: 1, expectOutput: "in"},
+        {name: "already_started", preState: &state.ActivityState{ActivityID: "act-fixed", ActivityName: "echo", WorkflowID: "wf-1", Status: state.StatusRunning, Input: "in", StartTime: time.Now().UTC()}, expectStarted: 0, expectCompleted: 1, expectOutput: "in"},
+        {name: "already_completed", preState: &state.ActivityState{ActivityID: "act-fixed", ActivityName: "echo", WorkflowID: "wf-1", Status: state.StatusCompleted, Input: "in", Output: "cached", StartTime: time.Now().UTC()}, expectStarted: 0, expectCompleted: 0, expectOutput: "cached"},
+    }
+
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            store := state.NewInMemoryStore()
+            q := queue.NewInMemoryQueue()
+            defer q.Close()
+
+            w, err := New(Config{ID: "w1", Queue: q, QueueName: "default", ActivityRegistry: actReg, StateStore: store, MaxConcurrent: 1, PollInterval: 50 * time.Millisecond})
+            if err != nil { t.Fatalf("new worker: %v", err) }
+
+            if tc.preState != nil {
+                if err := store.SaveActivityState(context.Background(), tc.preState); err != nil { t.Fatalf("pre save: %v", err) }
+            }
+
+            tsk := queue.NewTask(queue.TaskTypeActivity, "wf-1", "in")
+            tsk.ActivityID = "act-fixed"
+            tsk.ActivityName = "echo"
+
+            res := w.executeActivity(context.Background(), tsk)
+            if !res.Success { t.Fatalf("exec failed: %v", res.Error) }
+            if res.Output != tc.expectOutput { t.Fatalf("output: got %v want %v", res.Output, tc.expectOutput) }
+
+            evs, err := store.GetEvents(context.Background(), "wf-1")
+            if err != nil { t.Fatalf("get events: %v", err) }
+            started, completed := 0, 0
+            for _, e := range evs {
+                if e.Type == state.EventActivityStarted { started++ }
+                if e.Type == state.EventActivityCompleted { completed++ }
+            }
+            if started != tc.expectStarted { t.Fatalf("started: got %d want %d", started, tc.expectStarted) }
+            if completed != tc.expectCompleted { t.Fatalf("completed: got %d want %d", completed, tc.expectCompleted) }
+        })
+    }
+}

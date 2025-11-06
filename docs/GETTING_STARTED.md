@@ -375,6 +375,23 @@ Check:
 - Queue name matches workflow task queue
 - Activity is registered in worker's registry
 
+## Testing and Coverage
+
+We prefer table-driven tests and aim for 80%+ coverage.
+
+Run the suite:
+
+```bash
+go test ./... -cover
+```
+
+Generate a coverage report:
+
+```bash
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out -o coverage.html
+```
+
 ## Resources
 
 - [Architecture](ARCHITECTURE.md) - Deep dive into system design

@@ -220,3 +220,89 @@ func TestEngine_CancelWorkflow(t *testing.T) {
 		t.Error("expected workflow canceled event")
 	}
 }
+
+func TestEngine_StartWorkflow_Idempotency_Table(t *testing.T) {
+    store := state.NewInMemoryStore()
+    q := queue.NewInMemoryQueue()
+    defer q.Close()
+
+    reg := workflow.NewRegistry()
+    def := workflow.New("wf-idem").Build()
+    reg.Register(def)
+
+    eng, err := New(Config{StateStore: store, Queue: q, WorkflowRegistry: reg})
+    if err != nil { t.Fatalf("new engine: %v", err) }
+    defer eng.Stop()
+
+    type tc struct {
+        name       string
+        key1       string
+        key2       string
+        expectSame bool
+    }
+
+    cases := []tc{
+        {name: "no_key_distinct", key1: "", key2: "", expectSame: false},
+        {name: "same_key_same_id", key1: "k1", key2: "k1", expectSame: true},
+        {name: "different_key_distinct", key1: "k2", key2: "k3", expectSame: false},
+    }
+
+    for _, c := range cases {
+        id1, err := eng.StartWorkflowWithOptions(context.Background(), "wf-idem", nil, StartWorkflowOptions{IdempotencyKey: c.key1})
+        if err != nil { t.Fatalf("%s: start1: %v", c.name, err) }
+        id2, err := eng.StartWorkflowWithOptions(context.Background(), "wf-idem", nil, StartWorkflowOptions{IdempotencyKey: c.key2})
+        if err != nil { t.Fatalf("%s: start2: %v", c.name, err) }
+
+        if c.expectSame && id1 != id2 { t.Fatalf("%s: expected same ids, got %s vs %s", c.name, id1, id2) }
+        if !c.expectSame && id1 == id2 { t.Fatalf("%s: expected different ids, got %s and %s", c.name, id1, id2) }
+
+        time.Sleep(50 * time.Millisecond)
+        if c.expectSame {
+            evs, err := eng.GetWorkflowEvents(context.Background(), id1)
+            if err != nil { t.Fatalf("%s: events: %v", c.name, err) }
+            started := 0
+            for _, e := range evs { if e.Type == state.EventWorkflowStarted { started++ } }
+            if started != 1 { t.Fatalf("%s: expected 1 workflow_started, got %d", c.name, started) }
+        }
+    }
+}
+
+func TestEngine_DurableTimer_AcrossRestart(t *testing.T) {
+    store := state.NewInMemoryStore()
+    q := queue.NewInMemoryQueue()
+    defer q.Close()
+
+    reg := workflow.NewRegistry()
+    wf := workflow.WorkflowFunc(func(ctx workflow.Context, in interface{}) (interface{}, error) {
+        f := ctx.Sleep(300 * time.Millisecond)
+        var noop interface{}
+        if err := f.Get(context.Background(), &noop); err != nil { return nil, err }
+        return "done", nil
+    })
+    def := &workflow.Definition{Name: "sleep-wf", Workflow: wf, Options: workflow.Options{TaskQueue: "default"}}
+    reg.Register(def)
+
+    eng1, err := New(Config{StateStore: store, Queue: q, WorkflowRegistry: reg})
+    if err != nil { t.Fatalf("new engine: %v", err) }
+
+    id, err := eng1.StartWorkflow(context.Background(), "sleep-wf", nil)
+    if err != nil { t.Fatalf("start: %v", err) }
+
+    eng1.Stop()
+
+    time.Sleep(500 * time.Millisecond)
+
+    eng2, err := New(Config{StateStore: store, Queue: q, WorkflowRegistry: reg})
+    if err != nil { t.Fatalf("new engine2: %v", err) }
+    defer eng2.Stop()
+
+    deadline := time.Now().Add(2 * time.Second)
+    for time.Now().Before(deadline) {
+        st, err := eng2.GetWorkflowStatus(context.Background(), id)
+        if err == nil && st.Status == state.StatusCompleted {
+            return
+        }
+        time.Sleep(50 * time.Millisecond)
+    }
+    t.Fatalf("workflow did not complete across restart")
+}

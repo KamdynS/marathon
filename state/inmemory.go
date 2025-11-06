@@ -1,9 +1,10 @@
 package state
 
 import (
-	"context"
-	"fmt"
-	"sync"
+    "context"
+    "fmt"
+    "sync"
+    "time"
 )
 
 // InMemoryStore is an in-memory implementation of Store
@@ -12,6 +13,8 @@ type InMemoryStore struct {
 	workflows  map[string]*WorkflowState
 	events     map[string][]*Event
 	activities map[string]*ActivityState
+    idemKeys   map[string]string                    // idempotency key -> workflowID
+    timers     map[string]map[string]*TimerRecord   // workflowID -> timerID -> record
 }
 
 // NewInMemoryStore creates a new in-memory state store
@@ -19,7 +22,9 @@ func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		workflows:  make(map[string]*WorkflowState),
 		events:     make(map[string][]*Event),
-		activities: make(map[string]*ActivityState),
+        activities: make(map[string]*ActivityState),
+        idemKeys:   make(map[string]string),
+        timers:     make(map[string]map[string]*TimerRecord),
 	}
 }
 
@@ -164,5 +169,82 @@ func (s *InMemoryStore) DeleteWorkflow(ctx context.Context, workflowID string) e
 		}
 	}
 
+    // Delete associated timers
+    delete(s.timers, workflowID)
+
 	return nil
+}
+
+// MapIdempotencyKeyToWorkflow implements Store
+func (s *InMemoryStore) MapIdempotencyKeyToWorkflow(ctx context.Context, key string, workflowID string) (bool, string, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if existing, ok := s.idemKeys[key]; ok {
+        return false, existing, nil
+    }
+    s.idemKeys[key] = workflowID
+    return true, "", nil
+}
+
+// GetWorkflowIDByIdempotencyKey implements Store
+func (s *InMemoryStore) GetWorkflowIDByIdempotencyKey(ctx context.Context, key string) (string, bool, error) {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+
+    id, ok := s.idemKeys[key]
+    return id, ok, nil
+}
+
+// ScheduleTimer implements Store
+func (s *InMemoryStore) ScheduleTimer(ctx context.Context, workflowID string, timerID string, fireAt time.Time) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if _, ok := s.timers[workflowID]; !ok {
+        s.timers[workflowID] = make(map[string]*TimerRecord)
+    }
+    if _, exists := s.timers[workflowID][timerID]; exists {
+        return nil
+    }
+    rec := &TimerRecord{WorkflowID: workflowID, TimerID: timerID, FireAt: fireAt, Fired: false}
+    s.timers[workflowID][timerID] = rec
+    return nil
+}
+
+// ListDueTimers implements Store
+func (s *InMemoryStore) ListDueTimers(ctx context.Context, now time.Time) ([]TimerRecord, error) {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+
+    due := make([]TimerRecord, 0)
+    for _, wfTimers := range s.timers {
+        for _, rec := range wfTimers {
+            if !rec.Fired && !rec.FireAt.After(now) {
+                // append a copy
+                due = append(due, *rec)
+            }
+        }
+    }
+    return due, nil
+}
+
+// MarkTimerFired implements Store
+func (s *InMemoryStore) MarkTimerFired(ctx context.Context, workflowID string, timerID string) (bool, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    wfTimers, ok := s.timers[workflowID]
+    if !ok {
+        return false, fmt.Errorf("no timers for workflow %s", workflowID)
+    }
+    rec, ok := wfTimers[timerID]
+    if !ok {
+        return false, fmt.Errorf("timer %s not found", timerID)
+    }
+    if rec.Fired {
+        return false, nil
+    }
+    rec.Fired = true
+    return true, nil
 }

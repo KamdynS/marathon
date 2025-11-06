@@ -264,3 +264,44 @@ func TestServer_InvalidRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestServer_StartWorkflow_Idempotency_Table(t *testing.T) {
+    server := setupTestServer(t)
+
+    type tc struct {
+        name       string
+        key        string
+        expectSame bool
+    }
+
+    cases := []tc{
+        {name: "no_key_distinct", key: "", expectSame: false},
+        {name: "same_key_same_id", key: "kk", expectSame: true},
+    }
+
+    for _, c := range cases {
+        body := []byte(`{"workflow_name":"test-workflow", "input":"x"}`)
+        req1 := httptest.NewRequest(http.MethodPost, "/workflows", bytes.NewReader(body))
+        if c.key != "" { req1.Header.Set("Idempotency-Key", c.key) }
+        w1 := httptest.NewRecorder()
+        server.handleWorkflows(w1, req1)
+        if w1.Code != http.StatusOK { t.Fatalf("%s: status1=%d", c.name, w1.Code) }
+        var resp1 StartWorkflowResponse
+        json.NewDecoder(w1.Body).Decode(&resp1)
+
+        req2 := httptest.NewRequest(http.MethodPost, "/workflows", bytes.NewReader(body))
+        if c.key != "" { req2.Header.Set("Idempotency-Key", c.key) }
+        w2 := httptest.NewRecorder()
+        server.handleWorkflows(w2, req2)
+        if w2.Code != http.StatusOK { t.Fatalf("%s: status2=%d", c.name, w2.Code) }
+        var resp2 StartWorkflowResponse
+        json.NewDecoder(w2.Body).Decode(&resp2)
+
+        if c.expectSame && resp1.WorkflowID != resp2.WorkflowID {
+            t.Fatalf("%s: expected same workflow id, got %s vs %s", c.name, resp1.WorkflowID, resp2.WorkflowID)
+        }
+        if !c.expectSame && resp1.WorkflowID == resp2.WorkflowID {
+            t.Fatalf("%s: expected different workflow ids", c.name)
+        }
+    }
+}
