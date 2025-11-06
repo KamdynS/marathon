@@ -30,6 +30,28 @@ go test ./... -cover
 go test ./... -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
 ```
 
+### Optional adapters and build tags
+
+- By default, Marathon builds without external adapters to keep dependencies light.
+- To enable adapters, build with tags:
+
+```bash
+# Redis store and SQS queue
+go build -tags adapters_redis,adapters_sqs ./...
+```
+
+- SQS adapter requires AWS SDK v2 and is behind the `adapters_sqs` tag. To run its integration tests:
+
+```bash
+# With Localstack
+LOCALSTACK_URL=http://localhost:4566 go test ./adapters/sqs -tags adapters_sqs -v
+
+# Or with AWS (provide your queue URL/region/credentials)
+SQS_QUEUE_URL="https://sqs.${AWS_REGION}.amazonaws.com/<acct>/<queue>" \
+AWS_REGION="${AWS_REGION}" \
+go test ./adapters/sqs -tags adapters_sqs -v
+```
+
 ## License
 
 Apache License 2.0 - see [LICENSE](../LICENSE) for details.
