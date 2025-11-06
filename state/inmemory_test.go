@@ -136,3 +136,71 @@ func TestEventSequence_MonotonicAndAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestGetEventsSinceAndWindow_OrderAndBounds(t *testing.T) {
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	wf := "wf-window"
+	_ = store.SaveWorkflowState(ctx, &WorkflowState{WorkflowID: wf, WorkflowName: "w", Status: StatusRunning, StartTime: time.Now().UTC()})
+
+	// Append 10 events
+	for i := 0; i < 10; i++ {
+		_ = store.AppendEvent(ctx, NewEvent(wf, EventSignalReceived, map[string]interface{}{"i": i}))
+	}
+
+	// Since 0 should return all
+	all, err := store.GetEventsSince(ctx, wf, 0)
+	if err != nil {
+		t.Fatalf("GetEventsSince: %v", err)
+	}
+	if len(all) != 10 {
+		t.Fatalf("want 10 events, got %d", len(all))
+	}
+	for i := 1; i <= 10; i++ {
+		if all[i-1].SequenceNum != int64(i) {
+			t.Fatalf("order mismatch at %d", i)
+		}
+	}
+
+	// Window of size 3 starting after 4
+	win, next, err := store.GetEventsWindow(ctx, wf, 4, 3)
+	if err != nil {
+		t.Fatalf("GetEventsWindow: %v", err)
+	}
+	if len(win) != 3 || win[0].SequenceNum != 5 || win[2].SequenceNum != 7 || next != 7 {
+		t.Fatalf("unexpected window or next=%d", next)
+	}
+
+	// Next window starting after next
+	win2, next2, _ := store.GetEventsWindow(ctx, wf, next, 100)
+	if len(win2) != 3 || win2[0].SequenceNum != 8 || win2[2].SequenceNum != 10 || next2 != 10 {
+		t.Fatalf("unexpected window2 or next2=%d", next2)
+	}
+}
+
+func TestListWorkflows_StableOrder(t *testing.T) {
+	store := NewInMemoryStore()
+	ctx := context.Background()
+
+	// Create workflows with close StartTimes
+	w1 := &WorkflowState{WorkflowID: "a", WorkflowName: "A", Status: StatusRunning, StartTime: time.Now().UTC()}
+	time.Sleep(1 * time.Millisecond)
+	w2 := &WorkflowState{WorkflowID: "b", WorkflowName: "B", Status: StatusRunning, StartTime: time.Now().UTC()}
+	time.Sleep(1 * time.Millisecond)
+	w3 := &WorkflowState{WorkflowID: "c", WorkflowName: "C", Status: StatusRunning, StartTime: time.Now().UTC()}
+
+	_ = store.SaveWorkflowState(ctx, w2)
+	_ = store.SaveWorkflowState(ctx, w3)
+	_ = store.SaveWorkflowState(ctx, w1)
+
+	l1, _ := store.ListWorkflows(ctx, "")
+	l2, _ := store.ListWorkflows(ctx, "")
+	if len(l1) != 3 || len(l2) != 3 {
+		t.Fatalf("expected 3 workflows")
+	}
+	for i := 0; i < 3; i++ {
+		if l1[i].WorkflowID != l2[i].WorkflowID {
+			t.Fatalf("ordering not stable")
+		}
+	}
+}
