@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/KamdynS/marathon/engine"
-	"github.com/KamdynS/marathon/state"
+	"github.com/KamdynS/marathon/server/agenthttp"
 )
 
 // Server provides HTTP API for workflows
@@ -222,54 +222,16 @@ func (s *Server) handleGetWorkflowEvents(w http.ResponseWriter, r *http.Request,
 
 // handleWorkflowEventsSSE handles SSE streaming of workflow events
 func (s *Server) handleWorkflowEventsSSE(w http.ResponseWriter, r *http.Request, workflowID string) {
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.sendError(w, http.StatusInternalServerError, "streaming not supported")
-		return
-	}
-
-	ctx := r.Context()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastSeq int64 = 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Get new events since last check
-			events, err := s.engine.GetWorkflowEvents(ctx, workflowID)
-			if err != nil {
-				continue
-			}
-
-			// Send new events
-			for _, event := range events {
-				if event.SequenceNum > lastSeq {
-					data, _ := json.Marshal(event)
-					fmt.Fprintf(w, "data: %s\n\n", data)
-					flusher.Flush()
-					lastSeq = event.SequenceNum
-
-					// Check if workflow is complete
-					if event.Type == state.EventWorkflowCompleted ||
-						event.Type == state.EventWorkflowFailed ||
-						event.Type == state.EventWorkflowCanceled {
-						fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-						flusher.Flush()
-						return
-					}
-				}
-			}
-		}
-	}
+	lastID := r.Header.Get("Last-Event-ID")
+	_ = agenthttp.StreamEvents(
+		r.Context(),
+		w,
+		lastID,
+		s.engine.GetWorkflowEventsSince,
+		workflowID,
+		500*time.Millisecond,
+		15*time.Second,
+	)
 }
 
 // handleCancelWorkflow handles POST /workflows/{id}/cancel

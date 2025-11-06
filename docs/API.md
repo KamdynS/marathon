@@ -198,20 +198,27 @@ GET /workflows/{workflow_id}/events
 Accept: text/event-stream
 ```
 
-Supports `Last-Event-ID` for resume. Server emits:
+Supports `Last-Event-ID` for resume. If provided, the server streams only events with a sequence greater than `Last-Event-ID`. Events are framed per SSE as:
 
 ```
-id: <sequence>
+id: <sequence_num>
 event: <type>
-data: {json event}
+data: {json}
 
-: keep-alive
+: ping
 ```
 
 **Example**
 
 ```bash
-curl -N -H "Accept: text/event-stream" \
+curl -N \
+  -H "Accept: text/event-stream" \
+  http://localhost:8080/workflows/wf-1234567890/events
+
+# Resuming from the last received event sequence:
+curl -N \
+  -H "Accept: text/event-stream" \
+  -H "Last-Event-ID: 42" \
   http://localhost:8080/workflows/wf-1234567890/events
 ```
 
