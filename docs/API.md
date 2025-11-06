@@ -186,11 +186,21 @@ curl http://localhost:8080/workflows/wf-1234567890/events
 
 ### Stream Workflow Events (SSE)
 
-Stream workflow events in real-time using Server-Sent Events.
+Long-running workflows should use 202 + SSE instead of blocking requests.
 
 ```
 GET /workflows/{workflow_id}/events
 Accept: text/event-stream
+```
+
+Supports `Last-Event-ID` for resume. Server emits:
+
+```
+id: <sequence>
+event: <type>
+data: {json event}
+
+: keep-alive
 ```
 
 **Example**
@@ -200,20 +210,7 @@ curl -N -H "Accept: text/event-stream" \
   http://localhost:8080/workflows/wf-1234567890/events
 ```
 
-**Response**
-
-```
-data: {"id":"evt-1","type":"workflow_started",...}
-
-data: {"id":"evt-2","type":"activity_scheduled",...}
-
-data: {"id":"evt-3","type":"activity_completed",...}
-
-event: done
-data: {}
-```
-
-The stream automatically closes when the workflow completes, fails, or is canceled.
+See `server/agenthttp/sse.go` for a reusable helper.
 
 ---
 
