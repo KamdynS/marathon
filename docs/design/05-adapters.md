@@ -37,3 +37,28 @@ type Queue interface {
 - Build tags optional (e.g., `adapters_redis`, `adapters_sqs`) to keep base deps light.
 
 
+### Redis Store Notes
+- Key prefix (default `marathon`), overridable.
+- Keys:
+  - Workflow state JSON: `{prefix}:wf:{id}:state`
+  - Workflow events ZSET (score=sequence): `{prefix}:wf:{id}:events`
+  - Workflow seq counter: `{prefix}:wf:{id}:seq` (used by Lua)
+  - Activity state JSON: `{prefix}:act:{id}:state`
+  - Status index SET: `{prefix}:idx:status:{status}` (members: workflow IDs)
+  - Idempotency:
+    - Start: `{prefix}:idem:start:{key}` → `workflow_id`
+    - Activity: `{prefix}:idem:act:{activity_id}`
+  - Timers:
+    - Due ZSET: `{prefix}:timers:due` (member=`{workflowID}:{timerID}`, score=`fireAt ms`)
+    - Record JSON: `{prefix}:timer:{workflowID}:{timerID}`
+- Lua:
+  - AppendEvent: INCR seq, embed `sequence_num` into event JSON, ZADD, update workflow `last_event_seq` in state JSON atomically.
+  - MarkTimerFired: set `fired=true` in record and ZREM from due set atomically.
+
+#### Construction
+- First-class Redis support while keeping connection management user-owned:
+  - Preferred: pass your `redis.UniversalClient` (single, cluster, or ring) via `NewFromClient(ctx, client, prefix)`. The adapter will not close it.
+  - Convenience: use `New(Config)` if you want the adapter to create/manage a basic client for you.
+  - Both constructors load the Lua script and cache the SHA (best-effort).
+
+
